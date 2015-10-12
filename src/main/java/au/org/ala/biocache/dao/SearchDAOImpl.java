@@ -33,10 +33,10 @@ import org.apache.commons.io.output.ByteArrayOutputStream;
 import org.apache.commons.lang.ArrayUtils;
 import org.apache.commons.lang.StringUtils;
 import org.apache.log4j.Logger;
+import org.apache.solr.client.solrj.SolrClient;
 import org.apache.solr.client.solrj.SolrQuery;
 import org.apache.solr.client.solrj.SolrQuery.ORDER;
 import org.apache.solr.client.solrj.SolrRequest;
-import org.apache.solr.client.solrj.SolrServer;
 import org.apache.solr.client.solrj.SolrServerException;
 import org.apache.solr.client.solrj.beans.DocumentObjectBinder;
 import org.apache.solr.client.solrj.embedded.EmbeddedSolrServer;
@@ -56,7 +56,9 @@ import org.springframework.util.CollectionUtils;
 
 import javax.inject.Inject;
 import javax.servlet.ServletOutputStream;
-import java.io.*;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.io.OutputStreamWriter;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.*;
@@ -82,7 +84,7 @@ public class SearchDAOImpl implements SearchDAO {
     /** log4 j logger */
     private static final Logger logger = Logger.getLogger(SearchDAOImpl.class);
     /** SOLR server instance */
-    protected SolrServer server;
+    protected SolrClient server;
     protected SolrRequest.METHOD queryMethod;
     /** Limit search results - for performance reasons */
     protected Integer MAX_DOWNLOAD_SIZE = 500000;
@@ -120,6 +122,8 @@ public class SearchDAOImpl implements SearchDAO {
     //solr index version refresh time in ms, 5*60*1000
     @Value("${solr.server.indexVersion.refresh:300000}")
     int solrIndexVersionRefreshTime = 300000;
+    @Value("${solr.circle.segments:18}")
+    int solrCircleSegments = 18;
 
     /** Download properties */
     protected DownloadFields downloadFields;
@@ -189,7 +193,7 @@ public class SearchDAOImpl implements SearchDAO {
     private Map<String, IndexFieldDTO> indexFieldMap = null;
     private Map<String, StatsIndexFieldDTO> rangeFieldCache = null;
     private Set<String> authIndexFields = null;
-    
+
     /** SOLR index version for client app caching use. */
     private long solrIndexVersion = 0;
     /** last time SOLR index version was refreshed */
@@ -201,7 +205,7 @@ public class SearchDAOImpl implements SearchDAO {
      */
     public SearchDAOImpl() {}
 
-    private SolrServer getServer(){
+    private SolrClient getServer(){
         int retry = 0;
         while(server == null && retry < maxRetries){
             retry ++;
@@ -220,6 +224,8 @@ public class SearchDAOImpl implements SearchDAO {
                 dao.init();
                 server = dao.solrServer();
                 queryMethod = server instanceof EmbeddedSolrServer? SolrRequest.METHOD.GET:SolrRequest.METHOD.POST;
+                //check connection
+                server.ping();
                 logger.debug("The server " + server.getClass());
                 //CAUSING THE HANG....
                 downloadFields = new DownloadFields(getIndexedFields(), messageSource);
@@ -793,7 +799,7 @@ public class SearchDAOImpl implements SearchDAO {
             }
 
             //order the query by _docid_ for faster paging
-            solrQuery.addSortField("_docid_", ORDER.asc);
+            solrQuery.addSort("_docid_", ORDER.asc);
 
             //for each month create a separate query that pages through 500 records per page
             List<SolrQuery> queries = new ArrayList<SolrQuery>();
@@ -1195,7 +1201,7 @@ public class SearchDAOImpl implements SearchDAO {
         formatSearchQuery(searchParams);
         logger.info("search query: " + searchParams.getFormattedQuery());
         SolrQuery solrQuery = new SolrQuery();
-        solrQuery.setQueryType("standard");
+        solrQuery.setRequestHandler("standard");
         solrQuery.setQuery(buildSpatialQueryString(searchParams));
         solrQuery.setRows(0);
         solrQuery.setFacet(true);
@@ -1260,7 +1266,7 @@ public class SearchDAOImpl implements SearchDAO {
 
         logger.info("search query: " + queryString);
         SolrQuery solrQuery = new SolrQuery();
-        solrQuery.setQueryType("standard");
+        solrQuery.setRequestHandler("standard");
         solrQuery.setQuery(queryString);
         solrQuery.setRows(0);
         solrQuery.setFacet(true);
@@ -1330,7 +1336,7 @@ public class SearchDAOImpl implements SearchDAO {
 
         List<DataProviderCountDTO> dpDTOs = new ArrayList<DataProviderCountDTO>(); // new OccurrencePoint(PointType.POINT);
         SolrQuery solrQuery = new SolrQuery();
-        solrQuery.setQueryType("standard");
+        solrQuery.setRequestHandler("standard");
         solrQuery.setQuery("*:*");
         solrQuery.setRows(0);
         solrQuery.setFacet(true);
@@ -1379,7 +1385,7 @@ public class SearchDAOImpl implements SearchDAO {
         //String queryString = formatSearchQuery(query);
         logger.info("location search query: " + queryString + "; pointType: " + pointType.getLabel());
         SolrQuery solrQuery = new SolrQuery();
-        solrQuery.setQueryType("standard");
+        solrQuery.setRequestHandler("standard");
         solrQuery.setQuery(queryString);
 
 
@@ -1457,7 +1463,7 @@ public class SearchDAOImpl implements SearchDAO {
             throws Exception {
         List<FieldResultDTO> fDTOs = new ArrayList<FieldResultDTO>(); // new OccurrencePoint(PointType.POINT);
         SolrQuery solrQuery = new SolrQuery();
-        solrQuery.setQueryType("standard");
+        solrQuery.setRequestHandler("standard");
         solrQuery.setQuery(query);
         solrQuery.setRows(0);
         solrQuery.setFacet(true);
@@ -1483,7 +1489,7 @@ public class SearchDAOImpl implements SearchDAO {
         logger.debug("Attempting to find the counts for " + queryParams);
         TaxaRankCountDTO trDTO = null;
         SolrQuery solrQuery = new SolrQuery();
-        solrQuery.setQueryType("standard");
+        solrQuery.setRequestHandler("standard");
         formatSearchQuery(queryParams);
         solrQuery.setQuery(buildSpatialQueryString(queryParams));
         queryParams.setPageSize(0);
@@ -1566,7 +1572,7 @@ public class SearchDAOImpl implements SearchDAO {
             ranks.add(breakdownParams.getLevel());
         if (ranks != null && ranks.size() > 0) {
             SolrQuery solrQuery = new SolrQuery();
-            solrQuery.setQueryType("standard");
+            solrQuery.setRequestHandler("standard");
             solrQuery.setQuery(query);
             solrQuery.setRows(0);
             solrQuery.setFacet(true);
@@ -1691,7 +1697,7 @@ public class SearchDAOImpl implements SearchDAO {
 
         solrQuery.setRows(requestParams.getPageSize());
         solrQuery.setStart(requestParams.getStart());
-        solrQuery.setSortField(requestParams.getSort(), ORDER.valueOf(requestParams.getDir()));
+        solrQuery.setSort(requestParams.getSort(), ORDER.valueOf(requestParams.getDir()));
         logger.debug("runSolrQuery: " + solrQuery.toString());
         QueryResponse qr = query(solrQuery, queryMethod); // can throw exception
         logger.debug("runSolrQuery: " + solrQuery.toString() + " qtime:" + qr.getQTime());
@@ -1841,7 +1847,7 @@ public class SearchDAOImpl implements SearchDAO {
 
     private String getRangeValue(String lower, Number gap){
         StringBuilder value=new StringBuilder("[");
-        value.append(lower). append(" TO ").append(getUpperRange(lower,gap,true));
+        value.append(lower). append(" TO ").append(getUpperRange(lower, gap, true));
         return value.append("]").toString();
     }
 
@@ -1871,6 +1877,8 @@ public class SearchDAOImpl implements SearchDAO {
      * {!spatial circles=52.347,4.453,10}
      *
      * TODO different types of spatial queries...
+     * 
+     * SOLR 5 no longer supports Circle, fall back to WKT 
      *
      * @param fullTextQuery
      * @param latitude
@@ -1879,24 +1887,74 @@ public class SearchDAOImpl implements SearchDAO {
      * @return
      */
     protected String buildSpatialQueryString(String fullTextQuery, Float latitude, Float longitude, Float radius) {
+        String wkt = createCircleWkt(longitude, latitude, radius);
+        
         StringBuilder sb= new StringBuilder();
-        sb.append(spatialField).append(":\"Intersects(Circle(").append(longitude.toString());
-        sb.append(" ").append(latitude.toString()).append(" d=").append(SpatialUtils.convertToDegrees(radius).toString());
-        sb.append("))\"");
+        sb.append(spatialField).append(":\"Intersects(").append(wkt).append(")\"");
         if(StringUtils.isNotEmpty(fullTextQuery)){
           sb.append(" AND (").append(fullTextQuery).append(")");
         }
         return sb.toString();
     }
 
+    /**
+     * Create circle WKT
+     * 
+     * @param longitude decimal degrees
+     * @param latitude decimal degrees
+     * @param radius km                 
+     */
+    private String createCircleWkt(double longitude, double latitude, double radius) {
+        //radius to m
+        radius *= 1000;
+        
+        boolean belowMinus180 = false;
+        int step = 360 / solrCircleSegments;
+        double[][] points = new double[360/step][];
+        for (int i = 0; i < 360; i+=step) {
+            points[i/step] = computeOffset(latitude, 0, radius, i);
+            if (points[i/step][0] + longitude < -180) {
+                belowMinus180 = true;
+            }
+        }
+
+        //longitude translation
+        double dist = ((belowMinus180) ? 360 : 0) + longitude;
+
+        StringBuilder s = new StringBuilder();
+        s.append("POLYGON((");
+        for (int i = 0; i < 360; i+=step) {
+            s.append(points[i/step][0] + dist).append(" ").append(points[i/step][1]).append(",");
+        }
+        // append the first point to close the circle
+        s.append(points[0][0] + dist).append(" ").append(points[0][1]);
+        s.append("))");
+
+        return s.toString();
+    }
+
+    private double[] computeOffset(double lat, double lng, double radius, int angle) {
+        double b = radius / 6378137.0;
+        double c = angle * (Math.PI / 180.0);
+        double e = lat * (Math.PI / 180.0);
+        double d = Math.cos(b);
+        b = Math.sin(b);
+        double f = Math.sin(e);
+        e = Math.cos(e);
+        double g = d * f + b * e * Math.cos(c);
+
+        double x = (lng * (Math.PI / 180.0) + Math.atan2(b * e * Math.sin(c), d - f * g)) / (Math.PI / 180.0);
+        double y = Math.asin(g) / (Math.PI / 180.0);
+
+        return new double[]{x, y};
+    }
+
     protected String buildSpatialQueryString(SpatialSearchRequestParams searchParams){
         if(searchParams != null){
             StringBuilder sb = new StringBuilder();
             if(searchParams.getLat() != null){
-                sb.append(spatialField).append(":\"Intersects(Circle(");
-                sb.append(searchParams.getLon().toString()).append(" ").append(searchParams.getLat().toString());
-                sb.append(" d=").append(SpatialUtils.convertToDegrees(searchParams.getRadius()).toString());
-                sb.append("))\"");
+                String wkt = createCircleWkt(searchParams.getLon(), searchParams.getLat(), searchParams.getRadius());
+                sb.append(spatialField).append(":\"Intersects(").append(wkt).append(")\"");
             } else if(!StringUtils.isEmpty(searchParams.getWkt())){
                 //format the wkt
                 sb.append(SpatialUtils.getWKTQuery(spatialField, searchParams.getWkt(), false));
@@ -1916,7 +1974,7 @@ public class SearchDAOImpl implements SearchDAO {
     }
 
     protected void formatSearchQuery(SpatialSearchRequestParams searchParams) {
-        formatSearchQuery(searchParams,false);
+        formatSearchQuery(searchParams, false);
     }
 
     /**
@@ -2378,7 +2436,7 @@ public class SearchDAOImpl implements SearchDAO {
     protected SolrQuery initSolrQuery(SearchRequestParams searchParams, boolean substituteDefaultFacetOrder,Map<String,String[]> extraSolrParams) {
 
         SolrQuery solrQuery = new SolrQuery();
-        solrQuery.setQueryType("standard");
+        solrQuery.setRequestHandler("standard");
         boolean rangeAdded = false;
         // Facets
         solrQuery.setFacet(searchParams.getFacet());
@@ -2500,7 +2558,7 @@ public class SearchDAOImpl implements SearchDAO {
 
         List<TaxaCountDTO> speciesCounts = new ArrayList<TaxaCountDTO>();
         SolrQuery solrQuery = new SolrQuery();
-        solrQuery.setQueryType("standard");
+        solrQuery.setRequestHandler("standard");
         solrQuery.setQuery(queryString);
 
         if (filterQueries != null && filterQueries.size()>0) {
@@ -2608,7 +2666,7 @@ public class SearchDAOImpl implements SearchDAO {
         formatSearchQuery(searchParams);
         logger.info("The query : " + searchParams.getFormattedQuery());
         solrQuery.setQuery(buildSpatialQueryString(searchParams));
-        solrQuery.setQueryType("standard");
+        solrQuery.setRequestHandler("standard");
         solrQuery.setRows(0);
         solrQuery.setFacet(true);
         solrQuery.setFacetMinCount(1);
@@ -2689,7 +2747,7 @@ public class SearchDAOImpl implements SearchDAO {
             SolrQuery facetQuery = initSolrQuery(searchParams, false, null);
             facetQuery.setQuery(queryString);
             facetQuery.setFields(null);
-            facetQuery.setSortField(searchParams.getSort(), ORDER.valueOf(searchParams.getDir()));
+            facetQuery.setSort(searchParams.getSort(), ORDER.valueOf(searchParams.getDir()));
             QueryResponse qr = query(facetQuery, queryMethod);
             SearchResultDTO searchResults = processSolrResponse(searchParams, qr, facetQuery, OccurrenceIndex.class);
             facetResults = searchResults.getFacetResults();
@@ -2730,7 +2788,7 @@ public class SearchDAOImpl implements SearchDAO {
      * @return
      */
     private  Set<IndexFieldDTO> parseLukeResponse(String str, boolean includeCounts) {
-        
+
         //update index version
         Pattern indexVersion = Pattern.compile("(?:version=)([0-9]{1,})");
         try {
@@ -2933,7 +2991,7 @@ public class SearchDAOImpl implements SearchDAO {
         formatSearchQuery(searchParams);
         logger.info("search query: " + searchParams.getFormattedQuery());
         SolrQuery solrQuery = new SolrQuery();
-        solrQuery.setQueryType("standard");
+        solrQuery.setRequestHandler("standard");
         solrQuery.setQuery(buildSpatialQueryString(searchParams));
         solrQuery.setRows(0);
         solrQuery.setFacet(true);
@@ -3015,7 +3073,7 @@ public class SearchDAOImpl implements SearchDAO {
         formatSearchQuery(searchParams);
         logger.info("search query: " + searchParams.getFormattedQuery());
         SolrQuery solrQuery = new SolrQuery();
-        solrQuery.setQueryType("standard");
+        solrQuery.setRequestHandler("standard");
         solrQuery.setQuery(buildSpatialQueryString(searchParams));
         solrQuery.setRows(0);
         solrQuery.setFacet(true);
@@ -3076,7 +3134,7 @@ public class SearchDAOImpl implements SearchDAO {
 
     public Map<String, Integer> getOccurrenceCountsForTaxa(List<String> taxa) throws Exception{
         SolrQuery solrQuery = new SolrQuery();
-        solrQuery.setQueryType("standard");
+        solrQuery.setRequestHandler("standard");
         solrQuery.setRows(0);
         solrQuery.setFacet(true);
         solrQuery.setFacetLimit(taxa.size());
@@ -3114,14 +3172,14 @@ public class SearchDAOImpl implements SearchDAO {
      * @return the maxMultiPartThreads
      */
     public Integer getMaxMultiPartThreads() {
-      return maxMultiPartThreads;
+        return maxMultiPartThreads;
     }
 
     /**
      * @param maxMultiPartThreads the maxMultiPartThreads to set
      */
     public void setMaxMultiPartThreads(Integer maxMultiPartThreads) {
-      this.maxMultiPartThreads = maxMultiPartThreads;
+        this.maxMultiPartThreads = maxMultiPartThreads;
     }
 
     /**
@@ -3145,6 +3203,14 @@ public class SearchDAOImpl implements SearchDAO {
             retry++;
             try {
                 qr = getServer().query(query, queryMethod == null ? this.queryMethod : queryMethod); // can throw exception
+            } catch (IOException e) {
+                if (retry < maxRetries) {
+                    if (retryWait > 0) try {
+                        Thread.sleep(retryWait);
+                    } catch (Exception ex) {
+                        //do nothing
+                    }
+                }
             } catch (SolrServerException e) {
                 //want to retry IOException and Proxy Error
                 if (retry < maxRetries && (e.getMessage().contains("IOException") || e.getMessage().contains("Proxy Error"))) {
@@ -3207,9 +3273,9 @@ public class SearchDAOImpl implements SearchDAO {
 
     /**
      * Get the SOLR index version. Trigger a background refresh on a timeout.  
-     * 
+     *
      * Forcing an updated value will perform a new SOLR query for each request to be run in the foreground.
-     * 
+     *
      * @return
      * @param force
      */
@@ -3241,12 +3307,12 @@ public class SearchDAOImpl implements SearchDAO {
                 }
             }
         }
-        
+
         if (force && t != null) {
             //wait without lock
             t.run();
         }
-        
+
         return solrIndexVersion;
     }
 
@@ -3283,7 +3349,7 @@ public class SearchDAOImpl implements SearchDAO {
         QueryResponse response = query(query, queryMethod);
         logger.debug("runSolrQuery: " + query.toString() + " qtime:" + response.getQTime());
         GroupResponse groupResponse = response.getGroupResponse();
-        
+
         List<GroupFacetResultDTO> output = new ArrayList();
         for (GroupCommand gc : groupResponse.getValues()) {
             List<GroupFieldResultDTO> list = new ArrayList<GroupFieldResultDTO>();
@@ -3297,13 +3363,13 @@ public class SearchDAOImpl implements SearchDAO {
                 Long count = v.getResult() != null ? v.getResult().getNumFound() : 0L;
                 list.add(new GroupFieldResultDTO(getFacetValueDisplayName(facet, value), count, facet + ":\"" + value + "\"", docs));
             }
-            
+
             output.add(new GroupFacetResultDTO(gc.getName(), list, gc.getNGroups()));
         }
-        
+
         return output;
     }
-    
+
     String getFacetValueDisplayName(String facet, String value) {
         if(facet.endsWith("_uid")){
             return searchUtils.getUidDisplayString(facet, value, false);
