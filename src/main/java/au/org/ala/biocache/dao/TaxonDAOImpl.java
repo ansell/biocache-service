@@ -16,12 +16,14 @@ package au.org.ala.biocache.dao;
 
 import au.org.ala.biocache.index.IndexDAO;
 import au.org.ala.biocache.index.SolrIndexDAO;
+
 import org.apache.commons.lang.ArrayUtils;
 import org.apache.log4j.Logger;
 import org.apache.solr.client.solrj.SolrQuery;
 import org.apache.solr.client.solrj.SolrServer;
 import org.apache.solr.client.solrj.response.FacetField;
 import org.apache.solr.client.solrj.response.QueryResponse;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.io.Writer;
@@ -32,23 +34,70 @@ import java.util.List;
 @Component("taxonDao")
 public class TaxonDAOImpl implements TaxonDAO {
 
+    /**solr connection retry limit **/
+    @Value("${solr.server.retry.max:6}")
+    protected int maxRetries = 6;
+    /**solr connection wait time between retries in ms **/
+    @Value("${solr.server.retry.wait:50}")
+    protected long retryWait = 50;
+    
     private static final Logger logger = Logger.getLogger(TaxonDAOImpl.class);
-    protected SolrServer server;
+    protected volatile SolrServer server;
 
     /**
      * Initialise the SOLR server instance
      */
     public TaxonDAOImpl() {
-        if (this.server == null) {
-            try {
-                //use the solr server that has been in the biocache-store...
-                SolrIndexDAO dao = (SolrIndexDAO) au.org.ala.biocache.Config.getInstance(IndexDAO.class);
-                dao.init();
-                server = dao.solrServer();
-            } catch (Exception ex) {
-                logger.error("Error initialising embedded SOLR server: " + ex.getMessage(), ex);
+    }
+
+    private SolrServer getServer(){
+        SolrServer result = server;
+        if(result == null) {
+            synchronized(this) {
+                result = server;
+                if(result == null) {
+                    for (int retry = 0; result == null && retry < maxRetries; retry++){
+                        result = server = initServer();
+                        if (result == null && retryWait > 0) {
+                            try {
+                                Thread.sleep(retryWait);
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                            }
+                        }
+                    }
+                }
             }
         }
+        return result;
+    }
+
+    private SolrServer initServer() {
+        SolrServer result = server;
+        if (result == null) {
+            synchronized(this) {
+                result = server;
+                if(result == null) {
+                    try {
+                        // use the solr server that has been in the biocache-store...
+                        SolrIndexDAO dao = (SolrIndexDAO) au.org.ala.biocache.Config
+                            .getInstance(IndexDAO.class);
+                        dao.init();
+                        result = server = dao.solrServer();
+                        if (result == null) {
+                            logger.error("Unknown error initialising embedded SOLR server");
+                            return null;
+                        }
+                        if(logger.isDebugEnabled()) {
+                            logger.debug("The server " + result.getClass());
+                        }
+                    } catch (Exception ex) {
+                        logger.error("Error initialising embedded SOLR server: " + ex.getMessage(), ex);
+                    }
+                }
+            }
+        }
+        return result;
     }
 
     public void extractBySpeciesGroups(String metadataUrl, String q, String[] fq, Writer writer) throws Exception{
@@ -183,7 +232,7 @@ public class TaxonDAOImpl implements TaxonDAO {
         if(filterQueries != null){
             for(String fq: filterQueries) query.addFilterQuery(fq);
         }
-        QueryResponse response = server.query(query);
+        QueryResponse response = getServer().query(query);
         List<FacetField.Count> fc = response.getFacetField(facetName).getValues();
         if(fc == null){
             fc = new ArrayList<FacetField.Count>();

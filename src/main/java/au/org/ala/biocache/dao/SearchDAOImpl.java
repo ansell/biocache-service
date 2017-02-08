@@ -289,17 +289,15 @@ public class SearchDAOImpl implements SearchDAO {
             synchronized(this) {
                 result = server;
                 if(result == null) {
-                    int retry = 0;
-                    while(result == null && retry < maxRetries){
-                        retry ++;
-                        if (retryWait > 0) {
+                    for (int retry = 0; result == null && retry < maxRetries; retry++){
+                        result = server = initServer();
+                        if (result == null && retryWait > 0) {
                             try {
                                 Thread.sleep(retryWait);
                             } catch (InterruptedException e) {
                                 Thread.currentThread().interrupt();
                             }
                         }
-                        result = server = initServer();
                     }
                 }
             }
@@ -319,6 +317,10 @@ public class SearchDAOImpl implements SearchDAO {
                             .getInstance(IndexDAO.class);
                         dao.init();
                         result = server = dao.solrServer();
+                        if (result == null) {
+                            logger.error("Unknown error initialising embedded SOLR server");
+                            return null;
+                        }
                         queryMethod = result instanceof EmbeddedSolrServer? SolrRequest.METHOD.GET:SolrRequest.METHOD.POST;
                         if(logger.isDebugEnabled()) {
                             logger.debug("The server " + result.getClass());
