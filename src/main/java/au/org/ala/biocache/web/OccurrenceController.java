@@ -96,15 +96,15 @@ public class OccurrenceController extends AbstractSecureController {
     @Inject
     protected DownloadService downloadService;
     @Inject
-    private AbstractMessageSource messageSource;
+    protected AbstractMessageSource messageSource;
     @Inject
-    private ImageMetadataService imageMetadataService;
+    protected ImageMetadataService imageMetadataService;
     @Autowired
-    private Validator validator;
+    protected Validator validator;
     @Inject
     protected QidCacheDAO qidCacheDao;
     @Inject
-    private CacheManager cacheManager;
+    protected CacheManager cacheManager;
     
     /** Name of view for site home page */
     private String HOME = "homePage";
@@ -112,54 +112,78 @@ public class OccurrenceController extends AbstractSecureController {
     private String VALIDATION_ERROR = "error/validationError";
     
     @Value("${webservices.root:http://localhost:8080/biocache-service}")
-    protected String webservicesRoot;
+    protected String webservicesRoot = "http://localhost:8080/biocache-service";
     
     /** The response to be returned for the isAustralian test */
     @Value("${taxon.id.pattern:urn:lsid:biodiversity.org.au[a-zA-Z0-9\\.:-]*|http://id.biodiversity.org.au/[a-zA-Z0-9/]*}")
-    protected String taxonIDPatternString;
+    protected String taxonIDPatternString = "urn:lsid:biodiversity.org.au[a-zA-Z0-9\\.:-]*|http://id.biodiversity.org.au/[a-zA-Z0-9/]*";
 
     @Value("${native.country:Australia}")
-    protected String nativeCountry;
+    protected String nativeCountry = "Australia";
 
     /** Compiled pattern for taxon IDs */
     protected Pattern taxonIDPattern;
 
     @Value("${media.url:http://biocache.ala.org.au/biocache-media/}")
-    protected String biocacheMediaUrl;
+    protected String biocacheMediaUrl = "http://biocache.ala.org.au/biocache-media/";
 
     @Value("${facet.config:/data/biocache/config/facets.json}")
-    protected String facetConfig;
+    protected String facetConfig = "/data/biocache/config/facets.json";
 
     @Value("${facets.max:4}")
-    protected Integer facetsMax;
+    protected Integer facetsMax = 4;
 
     @Value("${facets.defaultmax:0}")
-    protected Integer facetsDefaultMax;
+    protected Integer facetsDefaultMax = 0;
 
     @Value("${facet.default:true}")
-    protected Boolean facetDefault;
+    protected Boolean facetDefault = true;
 
+    @Value("${occurrencecontroller.concurrency:2}")
+    protected Integer occurrenceControllerConcurrencyLevel = 2;
+    
     private ExecutorService executor;
     
+    /**
+     * Ensures initialisation is only attempted once, to avoid creating too many threads.
+     */
     private final AtomicBoolean initialised = new AtomicBoolean(false);
     
+    /**
+     * A latch that is released once initialisation completes, to enable the off-thread 
+     * initialisation to occur completely before servicing queries.
+     */
     private final CountDownLatch initialisationLatch = new CountDownLatch(1);
+    
+    /**
+     * Call this method at the start of web service calls that require initialisation to be complete before continuing.
+     * This blocks until it is either interrupted or the initialisation thread from {@link #init()} is finished (successful or not).
+     */
+    protected final void afterInitialisation() {
+        try {
+            initialisationLatch.await();
+        } catch(InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+    
     
     @PostConstruct
     public void init() {
         // Avoid starting multiple copies of the initialisation thread by repeat calls to this method
         if(initialised.compareAndSet(false, true)) {
-            String nameFormat = "occurrencecontroller-pool-%d";
-            executor = Executors.newFixedThreadPool(2,
-                    new ThreadFactoryBuilder().setNameFormat(nameFormat).setPriority(Thread.MIN_PRIORITY).build());
-            
             //init on a thread because SOLR may not yet be up and waiting can prevent SOLR from starting
             Thread initialisationThread = new Thread() {
+
                 @Override
                 public void run() {
                     try {
                         while (true) {
                             try {
+                                String nameFormat = "biocache-occurrencecontroller-pool-%d";
+                                executor = Executors.newFixedThreadPool(occurrenceControllerConcurrencyLevel,
+                                        new ThreadFactoryBuilder().setNameFormat(nameFormat).setPriority(Thread.MIN_PRIORITY).build());
+                                
                                 searchDAO.refreshCaches();
         
                                 Set<IndexFieldDTO> indexedFields = searchDAO.getIndexedFields();
@@ -193,18 +217,6 @@ public class OccurrenceController extends AbstractSecureController {
         }
     }
 
-    /**
-     * Call this method at the start of web service calls that require initialisation to be complete before continuing.
-     * This blocks until it is either interrupted or the initialisation thread from {@link #init()} is finished (successful or not).
-     */
-    private final void afterInitialisation() {
-        try {
-            initialisationLatch.await();
-        } catch(InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-    }
-    
     public Pattern getTaxonIDPattern(){
         if(taxonIDPattern == null){
             taxonIDPattern = Pattern.compile(taxonIDPatternString);
@@ -232,6 +244,7 @@ public class OccurrenceController extends AbstractSecureController {
      */
     @RequestMapping("/")
     public String homePageHandler(Model model) {
+        afterInitialisation();
         model.addAttribute("webservicesRoot", webservicesRoot);
         ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
         InputStream input = classLoader.getResourceAsStream("/git.properties");
@@ -266,6 +279,7 @@ public class OccurrenceController extends AbstractSecureController {
      */
     @RequestMapping("/oldapi")
     public String oldApiHandler(Model model) {
+        afterInitialisation();
         model.addAttribute("webservicesRoot", webservicesRoot);
         return "oldapi";
     }
@@ -273,6 +287,7 @@ public class OccurrenceController extends AbstractSecureController {
     
     @RequestMapping("/active/download/stats")
     public @ResponseBody List<DownloadDetailsDTO> getCurrentDownloads(){
+        afterInitialisation();
         return downloadService.getCurrentDownloads();
     }
     
@@ -457,6 +472,7 @@ public class OccurrenceController extends AbstractSecureController {
      */
     @RequestMapping(value={"/australian/taxon/**", "/native/taxon/**"})
     public @ResponseBody NativeDTO isAustralian(HttpServletRequest request) throws Exception {
+        afterInitialisation();
         //check to see if we have any occurrences on Australia  country:Australia or state != empty
         String guid = searchUtils.getGuidFromPath(request);
         NativeDTO adto = new NativeDTO();
@@ -704,6 +720,8 @@ public class OccurrenceController extends AbstractSecureController {
      */
     @RequestMapping(value = {"/cache/refresh"}, method = RequestMethod.GET)
     public @ResponseBody String refreshCache() throws Exception {
+        // Having a refresh occur within the initialisation period may create an undefined state
+        afterInitialisation();
         searchDAO.refreshCaches();
 
         //update FacetThemes static values
