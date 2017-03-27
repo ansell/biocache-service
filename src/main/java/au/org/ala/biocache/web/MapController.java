@@ -37,6 +37,7 @@ import org.springframework.web.context.ServletConfigAware;
 import javax.imageio.ImageIO;
 import javax.inject.Inject;
 import javax.servlet.ServletConfig;
+import javax.servlet.ServletException;
 import javax.servlet.ServletOutputStream;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
@@ -45,6 +46,9 @@ import java.awt.geom.Ellipse2D;
 import java.awt.geom.Rectangle2D;
 import java.awt.image.BufferedImage;
 import java.io.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
@@ -441,9 +445,9 @@ public class MapController implements ServletConfigAware {
             HttpServletResponse response) throws Exception {
 
         response.setContentType("image/png");
-        File outputDir = new File(heatmapOutputDir);
-        if(!outputDir.exists()){
-            FileUtils.forceMkdir(outputDir);
+        Path outputDir = Paths.get(heatmapOutputDir);
+        if(!Files.exists(outputDir)){
+            Files.createDirectories(outputDir);
         }
 
         //output heatmap path
@@ -458,11 +462,11 @@ public class MapController implements ServletConfigAware {
                 throw new IllegalArgumentException(String.format("Mismatch in facet values and colours. Values: %d, Colours: %d", facetValues.length, facetColours.length));
             }
         }
-               
+           
         //Does file exist on disk?
-        File f = new File(outputDir + "/" + outputHMFile);
+        Path f = outputDir.resolve(outputHMFile);
 
-        if (!f.isFile() || !f.exists() || forceRefresh) {
+        if (!Files.exists(f) || !Files.isRegularFile(f) || forceRefresh) {
             logger.debug("Regenerating heatmap image");
             //If not, generate
             generateStaticHeatmapImages(requestParams,  false, forcePointsDisplay, pointHeatMapThreshold, pointColour, facetValues, facetColours, opacity, request);
@@ -470,17 +474,20 @@ public class MapController implements ServletConfigAware {
             logger.debug("Heatmap file already exists on disk, sending file back to user");
         }
 
-        try {
+        try (InputStream input = Files.newInputStream(f);) {
             //read file off disk and send back to user
-            File file = new File(outputDir + "/" + outputHMFile);
-            BufferedImage img = ImageIO.read(file);
-            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-            ImageIO.write(img, "png", outputStream);
-            ServletOutputStream outStream = response.getOutputStream();
-            outStream.write(outputStream.toByteArray());
-            outStream.flush();
-            outStream.close();
-
+            BufferedImage img = ImageIO.read(input);
+            // The image can be null if the file was not readable
+            if (img == null) {
+                throw new ServletException("Unable to read the cached heatmap image: " + f.toString());
+            }
+            try (ServletOutputStream outStream = response.getOutputStream();) {
+                ImageIO.write(img, "png", outStream);
+                outStream.flush();
+            }
+        } catch (ServletException e) {
+            logger.error("Unable to read/write heatmap image", e);
+            throw e;
         } catch (Exception e) {
             logger.error("Unable to write image.", e);
         }
