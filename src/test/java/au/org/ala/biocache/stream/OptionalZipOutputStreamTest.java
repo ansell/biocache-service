@@ -69,7 +69,10 @@ public abstract class OptionalZipOutputStreamTest {
 
         Path tempFile = Files.createTempFile(testDir, "optionalzipoutputstream",
                 "." + (testType == Type.zipped ? "zip" : "dat"));
-        return Files.newOutputStream(tempFile);
+        OutputStream rawOutput = Files.newOutputStream(tempFile);
+        OptionalZipOutputStream testOptionalOutput = new OptionalZipOutputStream(getTestType(), rawOutput,
+                maxZipFileMB);
+        return testOptionalOutput;
     }
 
     /**
@@ -78,10 +81,8 @@ public abstract class OptionalZipOutputStreamTest {
      */
     @Test
     public final void testFlushNothingWritten() throws Exception {
-        try (OutputStream testOutput = getNewTestOutputStream();
-                OptionalZipOutputStream testOptionalOutput = new OptionalZipOutputStream(getTestType(), testOutput,
-                        maxZipFileMB);) {
-            testOptionalOutput.flush();
+        try (OutputStream testOutput = getNewTestOutputStream();) {
+            testOutput.flush();
         }
     }
 
@@ -91,10 +92,8 @@ public abstract class OptionalZipOutputStreamTest {
      */
     @Test
     public final void testCloseNothingWritten() throws Exception {
-        try (OutputStream testOutput = getNewTestOutputStream();
-                OptionalZipOutputStream testOptionalOutput = new OptionalZipOutputStream(getTestType(), testOutput,
-                        maxZipFileMB);) {
-            testOptionalOutput.close();
+        try (OutputStream testOutput = getNewTestOutputStream();) {
+            testOutput.close();
         }
     }
 
