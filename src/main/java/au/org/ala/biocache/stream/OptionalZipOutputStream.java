@@ -1,7 +1,6 @@
 package au.org.ala.biocache.stream;
 
-import au.org.ala.biocache.writer.RecordWriterError;
-
+import java.io.Flushable;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.zip.ZipOutputStream;
@@ -40,7 +39,7 @@ public class OptionalZipOutputStream extends OutputStream {
         if (type == OptionalZipOutputStream.Type.zipped) {
             currentEntryLength += length;
             if (currentEntryLength >= maxMB * 1024L * 1024L) {
-                if (writer instanceof RecordWriterError) ((RecordWriterError) writer).flush();
+                if (writer instanceof Flushable) ((Flushable) writer).flush();
 
                 closeEntry();
                 currentEntryLength = 0;

@@ -14,17 +14,17 @@
  ***************************************************************************/
 package au.org.ala.biocache.writer;
 
+import java.io.Flushable;
+
 import au.org.ala.biocache.RecordWriter;
 
 /**
  * Method for catching RecordWriter errors
  */
-public interface RecordWriterError extends RecordWriter {
+public interface RecordWriterError extends RecordWriter, Flushable {
 
     /**
      * @return true when there is a write error
      */
     boolean hasError();
-
-    void flush();
 }

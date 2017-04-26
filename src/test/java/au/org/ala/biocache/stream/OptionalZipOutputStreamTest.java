@@ -37,8 +37,6 @@ public abstract class OptionalZipOutputStreamTest {
 
     private Path testDir;
 
-    private Integer maxZipFileMB;
-
     /**
      * @throws java.lang.Exception
      */
@@ -64,14 +62,14 @@ public abstract class OptionalZipOutputStreamTest {
      */
     protected abstract Integer getTestMaxIndividualFileSize();
 
-    private OutputStream getNewTestOutputStream() throws IOException {
+    private OptionalZipOutputStream getNewTestOutputStream() throws IOException {
         Type testType = getTestType();
 
         Path tempFile = Files.createTempFile(testDir, "optionalzipoutputstream",
                 "." + (testType == Type.zipped ? "zip" : "dat"));
         OutputStream rawOutput = Files.newOutputStream(tempFile);
         OptionalZipOutputStream testOptionalOutput = new OptionalZipOutputStream(getTestType(), rawOutput,
-                maxZipFileMB);
+                getTestMaxIndividualFileSize());
         return testOptionalOutput;
     }
 
@@ -81,7 +79,7 @@ public abstract class OptionalZipOutputStreamTest {
      */
     @Test
     public final void testFlushNothingWritten() throws Exception {
-        try (OutputStream testOutput = getNewTestOutputStream();) {
+        try (OptionalZipOutputStream testOutput = getNewTestOutputStream();) {
             testOutput.flush();
         }
     }
@@ -92,7 +90,7 @@ public abstract class OptionalZipOutputStreamTest {
      */
     @Test
     public final void testCloseNothingWritten() throws Exception {
-        try (OutputStream testOutput = getNewTestOutputStream();) {
+        try (OptionalZipOutputStream testOutput = getNewTestOutputStream();) {
             testOutput.close();
         }
     }
@@ -102,8 +100,10 @@ public abstract class OptionalZipOutputStreamTest {
      * {@link au.org.ala.biocache.stream.OptionalZipOutputStream#isNewFile(java.lang.Object, long)}.
      */
     @Test
-    public final void testIsNewFile() throws Exception {
-        fail("Not yet implemented"); // TODO
+    public final void testIsNewFileNothingWrittenNotFlushable() throws Exception {
+        try (OptionalZipOutputStream testOutput = getNewTestOutputStream();) {
+            testOutput.isNewFile(new Object(), 0L);
+        }
     }
 
     /**
